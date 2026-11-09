@@ -3,6 +3,7 @@ local addonName, ns = ...
 local L = ns.L
 
 local LOGIN_CHECK_DELAY = 1.5
+local WINDOW_TRANSITION_DELAY = 1
 local PREFIX = "|cff33ff99Linux Resolution Fix Reforged|r: "
 
 local function Print(message)
@@ -50,7 +51,11 @@ local modernBackend = {
     end,
     Apply = function(width, height)
         C_VideoOptions.SetGameWindowSize(width, height)
-        if UpdateWindow then UpdateWindow() end
+        if UpdateWindow then
+            UpdateWindow()
+        elseif RestartGx then
+            RestartGx()
+        end
     end,
 }
 
@@ -112,12 +117,16 @@ local function GetCurrent()
     return Round(width), Round(height)
 end
 
+local applying = false
+
 -- Returns true when the resolution is correct.
-local function CheckResolution()
+local function CheckResolution(targetWidth, targetHeight)
+    -- Ignore resize events from the temporary windowed stage.
+    if applying then return false end
     if not backend then return true end
 
     local width, height = GetCurrent()
-    local targetWidth, targetHeight = backend.GetTarget()
+    if not targetWidth then targetWidth, targetHeight = backend.GetTarget() end
     if not targetWidth then
         button:Hide()
         return true
@@ -136,10 +145,66 @@ local function CheckResolution()
 end
 
 local function ApplyResolution()
+    if applying or not backend then return end
+    -- Capture the native size before temporarily resizing the window.
     local width, height = backend.GetTarget()
     if not width then return end
-    backend.Apply(width, height)
-    After(1, CheckResolution)
+
+    -- Some older clients do not expose this CVar; keep the resize-only fallback.
+    local hasMaximize, maximize = pcall(GetCVar, "gxMaximize")
+    local updateWindow = UpdateWindow or RestartGx
+    local resetFullscreen = hasMaximize and maximize == "1" and SetCVar and updateWindow
+    applying = true
+    button:Disable()
+    button:SetText(L.APPLYING)
+
+    local function Finish()
+        applying = false
+        button:Enable()
+        button:SetText(L.FIX_BUTTON)
+        -- Compare with the captured target, even if the API now reports a different default.
+        local ok, correct, actualWidth, actualHeight = pcall(CheckResolution, width, height)
+        if not ok then
+            Print(L.APPLY_ERROR:format(tostring(correct)))
+        elseif correct and actualWidth then
+            Print(L.OK:format(actualWidth, actualHeight))
+        elseif actualWidth then
+            Print(L.FAILED:format(actualWidth, actualHeight, width, height))
+        end
+    end
+
+    local function RestoreFullscreen()
+        if resetFullscreen then SetCVar("gxMaximize", "1") end
+        backend.Apply(width, height)
+    end
+
+    local function RestoreAndCheck()
+        local ok, err = pcall(RestoreFullscreen)
+        if not ok then
+            Print(L.APPLY_ERROR:format(tostring(err)))
+            -- Retry mode and size independently: a failed mode change must not
+            -- prevent restoring the original target size. Recovery is best effort.
+            if resetFullscreen then
+                pcall(SetCVar, "gxMaximize", "1")
+                local restoredSize = pcall(backend.Apply, width, height)
+                if not restoredSize then pcall(updateWindow) end
+            end
+        end
+        After(WINDOW_TRANSITION_DELAY, Finish)
+    end
+
+    if resetFullscreen then
+        -- Reproduce the working manual windowed -> fullscreen transition.
+        -- Give the window manager a distinct windowed size before restoring fullscreen.
+        local ok, err = pcall(function()
+            SetCVar("gxMaximize", "0")
+            backend.Apply(Round(width * 0.8), Round(height * 0.8))
+        end)
+        if not ok then Print(L.APPLY_ERROR:format(tostring(err))) end
+        After(WINDOW_TRANSITION_DELAY, RestoreAndCheck)
+    else
+        RestoreAndCheck()
+    end
 end
 
 button:SetScript("OnClick", ApplyResolution)

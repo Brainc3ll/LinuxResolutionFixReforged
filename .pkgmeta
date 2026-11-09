@@ -6,6 +6,7 @@ ignore:
     - .luacheckrc
     - .pkgmeta
     - .gitignore
+    - tests
     - CHANGELOG.md
     - RELEASE_NOTES.md
 

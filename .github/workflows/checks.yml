@@ -1,4 +1,4 @@
-# Runs on every push and pull request: luacheck on the addon's code.
+# Runs on every push and pull request: Lua lint and mocked WoW API regression tests.
 # A red cross on a commit means it found a problem.
 name: Checks
 
@@ -13,8 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install luacheck
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua-check >/dev/null
+      - name: Install Lua and luacheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1 lua-check >/dev/null
 
       - name: Static checks
         run: luacheck .
+
+      - name: Regression tests
+        run: lua5.1 tests/run.lua
